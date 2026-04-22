@@ -84,7 +84,7 @@ make clean
 
 * **Sylvain Pichot**  
 * **Jeanne De Marmiés**  
-* **Erik Hübne**  
+* **Erik Hübner**  
 * **Youcef Amar**
 
 ## **References**
