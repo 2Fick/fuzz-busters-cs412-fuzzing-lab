@@ -1,20 +1,15 @@
-# ==========================================
+
 # 1. LIBRARY SPECIFIC CONFIGURATION
-# ==========================================
-# TODO : Once you choose a library, fill these in:
-LIB_NAME = [my_library]
-LIB_VERSION = [e.g., 1.2.56]
-LIB_DIR = $(LIB_NAME)-$(LIB_VERSION)
+LIB_NAME = png
+LIB_VERSION = 1.6.37
+LIB_DIR = libpng-$(LIB_VERSION)
 
-# Example: wget https://... or git clone https://...
-DOWNLOAD_CMD = @echo "Error: No download command defined in Makefile" && exit 1
+DOWNLOAD_CMD = wget https://download.sourceforge.net/libpng/$(LIB_DIR).tar.gz && tar xf $(LIB_DIR).tar.gz
 
-# ==========================================
 # 2. PATHS AND TARGETS
-# ==========================================
 HARNESS_SRC = src/harness.c
 SEEDS = seeds/
-DICT = dictionaries/[library].dict
+DICT = dictionaries/png.dict
 AFL_CC = afl-clang-fast
 STD_CC = gcc
 
@@ -24,26 +19,40 @@ all: build
 
 # 3. WHITE-BOX BUILD (Instrumented + ASan)
 build:
-	@echo "[*] Downloading and building $(LIB_NAME) with instrumentation..."
-	# 1. Download library if not present
+	@echo "[*] Building libpng $(LIB_VERSION) with AFL++..."
+
 	test -d $(LIB_DIR) || ($(DOWNLOAD_CMD))
-	# 2. Apply patches (e.g., CRC removal)
-	# patch -p0 < patches/nocrc.patch
-	# 3. Build library with AFL compiler and ASan
+
 	cd $(LIB_DIR) && \
-	CC=$(AFL_CC) CFLAGS="-fsanitize=address -g -O1" ./configure --disable-shared && \
+	CC=$(AFL_CC) \
+	CFLAGS="-fsanitize=address -g -O1" \
+	LDFLAGS="-fsanitize=address" \
+	./configure --disable-shared && \
 	make -j$$(nproc)
-	# 4. Build harness
+
 	$(AFL_CC) -fsanitize=address -g -O1 $(HARNESS_SRC) \
-		-I$(LIB_DIR) $(LIB_DIR)/.libs/lib$(LIB_NAME).a \
-		-lz -lm -o harness_whitebox
+		-I$(LIB_DIR) \
+		$(LIB_DIR)/.libs/libpng16.a \
+		-lz -lm \
+		-o harness_whitebox
 
 # 4. BLACK-BOX BUILD (Standard GCC)
 build-qemu:
-	@echo "[*] Building $(LIB_NAME) for QEMU mode..."
-	# Similar to above but:
-	# CC=$(STD_CC) CFLAGS="-g -O1" ./configure ...
-	# $(STD_CC) -g -O1 $(HARNESS_SRC) ... -o harness_blackbox
+	@echo "[*] Building libpng (QEMU mode)..."
+
+	test -d $(LIB_DIR) || ($(DOWNLOAD_CMD))
+
+	cd $(LIB_DIR) && \
+	CC=$(STD_CC) \
+	CFLAGS="-g -O1" \
+	./configure --disable-shared && \
+	make -j$$(nproc)
+
+	$(STD_CC) -g -O1 $(HARNESS_SRC) \
+		-I$(LIB_DIR) \
+		$(LIB_DIR)/.libs/libpng16.a \
+		-lz -lm \
+		-o harness_blackbox
 
 # 5. EXECUTION TARGETS
 fuzz: build

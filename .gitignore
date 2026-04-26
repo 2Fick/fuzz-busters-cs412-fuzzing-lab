@@ -1,0 +1,21 @@
+# Build artifacts
+*.o
+*.a
+*.so
+*.lo
+*.la
+*.dylib
+
+# Binaries
+harness_whitebox
+harness_blackbox
+
+# Downloaded libraries
+libpng-*/
+*.tar.gz
+
+# AFL++ outputs
+findings/
+findings-qemu/
+plot_output/
+plot_output_qemu/
