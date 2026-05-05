@@ -1,10 +1,8 @@
 
 # 1. LIBRARY SPECIFIC CONFIGURATION
 LIB_NAME = png
-LIB_VERSION = 1.2.54
+LIB_VERSION = 1.2.56
 LIB_DIR = libpng-$(LIB_VERSION)
-
-DOWNLOAD_CMD = wget https://download.sourceforge.net/libpng/$(LIB_DIR).tar.gz && tar xf $(LIB_DIR).tar.gz
 
 # 2. PATHS AND TARGETS
 HARNESS_SRC = src/harness.c
@@ -20,8 +18,6 @@ all: build
 # 3. WHITE-BOX BUILD (Instrumented + ASan)
 build:
 	@echo "[*] Building libpng $(LIB_VERSION) with AFL++..."
-
-	test -d $(LIB_DIR) || ($(DOWNLOAD_CMD))
 
 	cd $(LIB_DIR) && \
 	CC=$(AFL_CC) \
@@ -39,8 +35,6 @@ build:
 # 4. BLACK-BOX BUILD (Standard GCC)
 build-qemu:
 	@echo "[*] Building libpng (QEMU mode)..."
-
-	test -d $(LIB_DIR) || ($(DOWNLOAD_CMD))
 
 	cd $(LIB_DIR) && \
 	CC=$(STD_CC) \
