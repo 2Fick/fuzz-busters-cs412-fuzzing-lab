@@ -49,7 +49,7 @@ build-qemu:
 		-lz -lm -o harness_blackbox
 
 # 5. PERSISTENT MODE BUILD (for Q8)
-build-persistent:
+build-persistent: build
 	@echo "[*] Building persistent mode harness..."
 	$(AFL_CC) -fsanitize=address -g -O1 $(HARNESS_PERSISTENT_SRC) \
 		-I$(LIB_DIR) $(LIB_DIR)/.libs/libpng12.a \
