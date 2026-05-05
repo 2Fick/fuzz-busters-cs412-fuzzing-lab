@@ -19,8 +19,10 @@ WORKDIR /fuzzing
 # Copy the local repository (harness, patches, etc.) into the container
 COPY . .
 
-# Download libpng 1.2.56
+# Download libpng 1.2.56 and extract two copies: one for instrumented, one for QEMU
 RUN wget https://download.sourceforge.net/libpng/libpng-1.2.56.tar.gz && \
+    tar xf libpng-1.2.56.tar.gz && \
+    mv libpng-1.2.56 libpng-1.2.56_qemu && \
     tar xf libpng-1.2.56.tar.gz
 
 # Environment variables to optimize AFL++ behavior in Docker
