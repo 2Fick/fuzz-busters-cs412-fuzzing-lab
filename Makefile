@@ -1,7 +1,7 @@
 
 # 1. LIBRARY SPECIFIC CONFIGURATION
 LIB_NAME = png
-LIB_VERSION = 1.6.37
+LIB_VERSION = 1.2.54
 LIB_DIR = libpng-$(LIB_VERSION)
 
 DOWNLOAD_CMD = wget https://download.sourceforge.net/libpng/$(LIB_DIR).tar.gz && tar xf $(LIB_DIR).tar.gz
