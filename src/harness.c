@@ -62,6 +62,8 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    png_read_end(png, NULL);
+
     // Cleanup
     png_destroy_read_struct(&png, &info, NULL);
     fclose(fp);
