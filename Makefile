@@ -3,52 +3,65 @@
 LIB_NAME = png
 LIB_VERSION = 1.2.56
 LIB_DIR = libpng-$(LIB_VERSION)
+# vanilla directory for black-box comparison
+LIB_DIR_VANILLA = $(LIB_DIR)_vanilla
 
 # 2. PATHS AND TARGETS
 HARNESS_SRC = src/harness.c
+HARNESS_PERSISTENT_SRC = src/harness_persistent.c
 SEEDS = seeds/
 DICT = dictionaries/png.dict
 AFL_CC = afl-clang-fast
 STD_CC = gcc
 
-.PHONY: all build fuzz fuzz-qemu plot clean build-docker
+# Path to the AFL++ utility patches
+AFL_PATCH = /AFLplusplus/utils/libpng_no_checksum/libpng-nocrc.patch
 
-all: build
+.PHONY: all build build-qemu build-persistent fuzz fuzz-qemu plot clean build-docker
 
-# 3. WHITE-BOX BUILD (Instrumented + ASan)
+all: build build-qemu build-persistent
+
+# 3. WHITE-BOX BUILD (Instrumented + ASan + Patch)
 build:
-	@echo "[*] Building libpng $(LIB_VERSION) with AFL++..."
-
+	@echo "[*] Setting up instrumented build..."
+	@if [ ! -d $(LIB_DIR) ]; then \
+		$(DOWNLOAD_CMD); \
+	fi
+	# Apply the CRC patch (Educational requirement)
+	cd $(LIB_DIR) && (patch -p0 -N < $(AFL_PATCH) || true)
+	# Configure and compile with AFL compiler
 	cd $(LIB_DIR) && \
-	CC=$(AFL_CC) \
-	CFLAGS="-fsanitize=address -g -O1" \
-	LDFLAGS="-fsanitize=address" \
-	./configure --disable-shared && \
+	CC=$(AFL_CC) CFLAGS="-fsanitize=address -g -O1" ./configure --disable-shared && \
 	make -j$$(nproc)
-
+	# Build the white-box harness
 	$(AFL_CC) -fsanitize=address -g -O1 $(HARNESS_SRC) \
-		-I$(LIB_DIR) \
-		$(LIB_DIR)/.libs/libpng16.a \
-		-lz -lm \
-		-o harness_whitebox
+		-I$(LIB_DIR) $(LIB_DIR)/.libs/libpng12.a \
+		-lz -lm -o harness_whitebox
 
-# 4. BLACK-BOX BUILD (Standard GCC)
+# 4. BLACK-BOX BUILD (Standard GCC, no instrumentation, no sanitizers)
 build-qemu:
-	@echo "[*] Building libpng (QEMU mode)..."
-
-	cd $(LIB_DIR) && \
-	CC=$(STD_CC) \
-	CFLAGS="-g -O1" \
-	./configure --disable-shared && \
+	@echo "[*] Setting up uninstrumented build for QEMU..."
+	@if [ ! -d $(LIB_DIR_VANILLA) ]; then \
+		$(DOWNLOAD_CMD) && mv $(LIB_DIR) $(LIB_DIR_VANILLA); \
+	fi
+	# Apply CRC patch even for vanilla (to allow mutations to reach code)
+	cd $(LIB_DIR_VANILLA) && (patch -p0 -N < $(AFL_PATCH) || true)
+	cd $(LIB_DIR_VANILLA) && \
+	CC=$(STD_CC) CFLAGS="-g -O1" ./configure --disable-shared && \
 	make -j$$(nproc)
-
+	# Build the black-box harness
 	$(STD_CC) -g -O1 $(HARNESS_SRC) \
-		-I$(LIB_DIR) \
-		$(LIB_DIR)/.libs/libpng16.a \
-		-lz -lm \
-		-o harness_blackbox
+		-I$(LIB_DIR_VANILLA) $(LIB_DIR_VANILLA)/.libs/libpng12.a \
+		-lz -lm -o harness_blackbox
 
-# 5. EXECUTION TARGETS
+# 5. PERSISTENT MODE BUILD (for Q8)
+build-persistent:
+	@echo "[*] Building persistent mode harness..."
+	$(AFL_CC) -fsanitize=address -g -O1 $(HARNESS_PERSISTENT_SRC) \
+		-I$(LIB_DIR) $(LIB_DIR)/.libs/libpng12.a \
+		-lz -lm -o harness_persistent
+
+# 6. EXECUTION TARGETS
 fuzz: build
 	afl-fuzz -i $(SEEDS) -o findings -x $(DICT) -- ./harness_whitebox @@
 
@@ -61,7 +74,8 @@ plot:
 
 clean:
 	rm -rf findings/ findings-qemu/ plot_output/ plot_output_qemu/
-	rm -f harness_whitebox harness_blackbox
+	rm -f harness_whitebox harness_blackbox harness_persistent
+	rm -rf $(LIB_DIR) $(LIB_DIR_VANILLA) *.tar.gz
 
 build-docker:
 	docker build -t cs412-fuzz-env .
