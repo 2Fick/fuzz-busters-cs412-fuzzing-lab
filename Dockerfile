@@ -13,14 +13,15 @@ RUN apt-get update && apt-get install -y \
     libcurl4-openssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# TODO: Once the library is chosen, add any specific dependencies here
-# e.g., RUN apt-get install -y libjpeg-dev for SDL image support
-
 # Set up working directory
 WORKDIR /fuzzing
 
 # Copy the local repository (harness, patches, etc.) into the container
 COPY . .
+
+# Download libpng 1.2.56
+RUN wget https://download.sourceforge.net/libpng/libpng-1.2.56.tar.gz && \
+    tar xf libpng-1.2.56.tar.gz
 
 # Environment variables to optimize AFL++ behavior in Docker
 ENV AFL_SKIP_CPUFREQ=1
