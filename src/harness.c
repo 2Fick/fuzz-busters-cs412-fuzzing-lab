@@ -14,9 +14,7 @@ int main(int argc, char *argv[]) {
 
     // Read PNG signature
     unsigned char header[8];
-    fread(header, 1, 8, fp);
-
-    if (png_sig_cmp(header, 0, 8)) {
+    if (fread(header, 1, 8, fp) != 8 || png_sig_cmp(header, 0, 8)) {
         fclose(fp);
         return 0; // not a PNG, ignore
     }
@@ -46,6 +44,23 @@ int main(int argc, char *argv[]) {
     png_set_sig_bytes(png, 8);
 
     png_read_info(png, info);
+
+    png_set_expand(png);
+    png_read_update_info(png, info);
+
+    // attempt to read the image rows
+    int height = png_get_image_height(png, info);
+    int rowbytes = png_get_rowbytes(png, info);
+    if (height < 10000 && rowbytes < 10000) { 
+        // guard against huge allocations
+        png_bytep row_ptr = malloc(rowbytes);
+        if (row_ptr) {
+            for (int i = 0; i < height; i++) {
+                png_read_row(png, row_ptr, NULL);
+            }
+            free(row_ptr);
+        }
+    }
 
     // Cleanup
     png_destroy_read_struct(&png, &info, NULL);
