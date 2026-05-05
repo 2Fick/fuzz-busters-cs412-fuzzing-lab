@@ -48,7 +48,18 @@ Building the Docker container ensures a reproducible environment with the AFL++ 
 make build-docker
 ```
 
-### **2\. Launch the Instrumented Campaign (White-box)**
+### **2\. Enter the Container**
+
+All build and fuzz targets must be run **inside** the Docker container, where AFL++ and the library dependencies are available.
+
+```
+docker run -it --rm \
+  -v $(pwd)/findings:/fuzzing/findings \
+  -v $(pwd)/findings-qemu:/fuzzing/findings-qemu \
+  cs412-fuzz-env bash
+```
+
+### **3\. Launch the Instrumented Campaign (White-box)**
 
 This target compiles the library with afl-clang-fast and AddressSanitizer (ASan) enabled, then starts the fuzzer.
 
@@ -56,7 +67,7 @@ This target compiles the library with afl-clang-fast and AddressSanitizer (ASan)
 make fuzz
 ```
 
-### **3\. Launch the QEMU Campaign (Black-box)**
+### **4\. Launch the QEMU Campaign (Black-box)**
 
 This target compiles the library with standard gcc (no instrumentation) and launches AFL++ in QEMU emulation mode.
 
@@ -64,7 +75,7 @@ This target compiles the library with standard gcc (no instrumentation) and laun
 make fuzz-qemu
 ```
 
-### **4\. Generate Reports and Plots**
+### **5\. Generate Reports and Plots**
 
 After running the campaigns for at least 30 minutes, generate the visual progress plots required for the report:
 
@@ -72,7 +83,7 @@ After running the campaigns for at least 30 minutes, generate the visual progres
 make plot
 ```
 
-### **5\. Clean Artifacts**
+### **6\. Clean Artifacts**
 
 To reset the environment and remove findings:
 
