@@ -12,13 +12,6 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Read PNG signature
-    unsigned char header[8];
-    if (fread(header, 1, 8, fp) != 8 || png_sig_cmp(header, 0, 8)) {
-        fclose(fp);
-        return 0; // not a PNG, ignore
-    }
-
     // Create PNG read struct
     png_structp png = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
     if (!png) {
@@ -34,14 +27,12 @@ int main(int argc, char *argv[]) {
     }
 
     if (setjmp(png_jmpbuf(png))) {
-        // libpng error handling
         png_destroy_read_struct(&png, &info, NULL);
         fclose(fp);
         return 0;
     }
 
     png_init_io(png, fp);
-    png_set_sig_bytes(png, 8);
 
     png_read_info(png, info);
 
@@ -51,8 +42,7 @@ int main(int argc, char *argv[]) {
     // attempt to read the image rows
     int height = png_get_image_height(png, info);
     int rowbytes = png_get_rowbytes(png, info);
-    if (height < 10000 && rowbytes < 10000) { 
-        // guard against huge allocations
+    if ((size_t)height * rowbytes < 10 * 1024 * 1024) {
         png_bytep row_ptr = malloc(rowbytes);
         if (row_ptr) {
             for (int i = 0; i < height; i++) {
