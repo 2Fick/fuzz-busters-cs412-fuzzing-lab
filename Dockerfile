@@ -23,7 +23,8 @@ COPY . .
 RUN wget https://download.sourceforge.net/libpng/libpng-1.2.56.tar.gz && \
     tar xf libpng-1.2.56.tar.gz && \
     mv libpng-1.2.56 libpng-1.2.56_qemu && \
-    tar xf libpng-1.2.56.tar.gz
+    tar xf libpng-1.2.56.tar.gz && \
+    chown -R ubuntu:ubuntu /fuzzing
 
 # Environment variables to optimize AFL++ behavior in Docker
 ENV AFL_SKIP_CPUFREQ=1
