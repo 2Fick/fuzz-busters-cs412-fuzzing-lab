@@ -13,17 +13,34 @@ SEEDS = seeds/
 DICT = dictionaries/png.dict
 AFL_CC = afl-clang-fast
 STD_CC = gcc
+PNG_TARBALL = libpng-$(LIB_VERSION).tar.gz
+PNG_URL = https://download.sourceforge.net/libpng/$(PNG_TARBALL)
 
 # Path to the AFL++ utility patches
 AFL_PATCH = /AFLplusplus/utils/libpng_no_checksum/libpng-nocrc.patch
 
-.PHONY: all build build-qemu build-persistent fuzz fuzz-qemu plot clean build-docker
+.PHONY: all build build-qemu build-persistent fuzz fuzz-qemu plot clean build-docker bootstrap-libpng
 
 all: build build-qemu build-persistent
 
 # 3. WHITE-BOX BUILD (Instrumented + ASan + Patch)
+bootstrap-libpng:
+	@set -e; \
+	if [ ! -d "libpng-$(LIB_VERSION)" ] || [ ! -d "libpng-$(LIB_VERSION)_qemu" ] || [ ! -d "libpng-$(LIB_VERSION)_bugged" ]; then \
+		if [ ! -f "$(PNG_TARBALL)" ]; then \
+			wget -q "$(PNG_URL)"; \
+		fi; \
+		rm -rf "libpng-$(LIB_VERSION)" "libpng-$(LIB_VERSION)_qemu" "libpng-$(LIB_VERSION)_bugged"; \
+		tar xf "$(PNG_TARBALL)"; \
+		mv "libpng-$(LIB_VERSION)" "libpng-$(LIB_VERSION)_qemu"; \
+		tar xf "$(PNG_TARBALL)"; \
+		cp -a "libpng-$(LIB_VERSION)" "libpng-$(LIB_VERSION)_bugged"; \
+		python3 patches/insert_synthetic.py "libpng-$(LIB_VERSION)_bugged/pngread.c" || true; \
+	fi
+
 build:
 	@echo "[*] Setting up instrumented build..."
+	$(MAKE) bootstrap-libpng
 	# Apply the CRC patch (Educational requirement)
 	cd $(LIB_DIR) && (patch -p0 -N < $(AFL_PATCH) || true)
 	# Configure and compile with AFL compiler
@@ -38,6 +55,7 @@ build:
 # 4. BLACK-BOX BUILD (Standard GCC, no instrumentation, no sanitizers)
 build-qemu:
 	@echo "[*] Setting up uninstrumented build for QEMU..."
+	$(MAKE) bootstrap-libpng
 	# Apply CRC patch even for vanilla (to allow mutations to reach code)
 	cd $(LIB_DIR_QEMU) && (patch -p0 -N < $(AFL_PATCH) || true)
 	cd $(LIB_DIR_QEMU) && \
