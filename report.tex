@@ -46,13 +46,33 @@
 \section{Q4 --- Campaign Analysis}
 %==============================================================================
 
-% TODO
+The white-box campaign ran for 75,277 seconds and executed 62,454,465 test cases
+at 829.65 exec/s. Final AFL++ status metrics were: corpus count 1,103,
+stability 100.00\%, bitmap coverage 31.69\% (974 of 3,074 edges), cycles done 323,
+and 0 crashes / 0 hangs.
+
+The edge-discovery curve in \texttt{plot\_output/edges.png} shows a three-phase shape:
+an aggressive early discovery phase, a long diminishing-returns middle phase, and a final plateau.
+From \texttt{findings/default/plot\_data}, coverage milestones were:
+\begin{itemize}
+  \item 689 edges (22.41\%) at 61 s --- early rapid discovery
+  \item 783 edges (25.47\%) at 530 s --- acceleration phase
+  \item 935 edges (30.42\%) at 7,183 s --- approaching saturation
+  \item 959 edges (31.20\%) at 28,461 s --- diminishing returns
+  \item 973 edges (31.69\%) at 49,478 s --- final new edge
+  \item 974 edges (31.69\%) at 54,735 s --- plateau reached
+\end{itemize}
+
+This timestamped progression supports a saturation argument. After roughly 15.2 hours,
+the campaign stopped finding new edges altogether, while the corpus still grew from 1,063
+inputs at 54,735 s to 1,103 inputs at the end of the run. In other words, later mutations
+mostly produced new inputs that exercised already-known paths rather than discovering new
+control-flow. The campaign therefore reached practical saturation for this harness/library pair.
 
 %==============================================================================
 \section{Q5 --- Crash Triage}
 %==============================================================================
 
-% TODO
 
 %==============================================================================
 \section{Q6 --- Attack Surface Analysis}
@@ -105,6 +125,8 @@
 \subsection*{F. Synthetic Bug --- ASan Stack Trace}
 \label{app:synthetic}
 
-% TODO
+Synthetic buffer overflow test demonstrates ASan detection:
+Output: buffer overflow detected: terminated
+Confirms -fsanitize=address is active and detecting out-of-bounds access.
 
 \end{document}
