@@ -24,13 +24,17 @@ fuzz-busters-cs412-fuzzing-lab/
 ├── findings-qemu/           \# Results from QEMU-mode (black-box) campaign  
 │   └── default/  
 │       └── plot\_data        \# Data used for generating QEMU coverage graphs  
+├── findings-bugged/         \# Results from synthetic-bug validation campaign  
+│   └── default/  
+│       └── plot\_data        \# Data used for generating bugged coverage graphs  
 ├── plot\_output/             \# afl-plot output for instrumented campaign  
 │   ├── index.html  
 │   ├── edges.png            \# Coverage graph (Required for Appendix)  
 │   └── exec\_speed.png       \# Execution speed graph  
-└── plot\_output\_qemu/        \# afl-plot output for QEMU campaign  
-    ├── index.html  
-    └── edges.png            \# Coverage graph (Required for Appendix)
+├── plot\_output\_qemu/        \# afl-plot output for QEMU campaign  
+│   ├── index.html  
+│   └── edges.png            \# Coverage graph (Required for Appendix)  
+└── plot\_output\_bugged/      \# afl-plot output for synthetic-bug validation
 ```
 
 ## **Prerequisites**
@@ -50,13 +54,10 @@ make build-docker
 
 ### **2\. Enter the Container**
 
-All build and fuzz targets must be run **inside** the Docker container, where AFL++ and the library dependencies are available.
+All build and fuzz targets must be run **inside** the Docker container, where AFL++ and the library dependencies are available. Use the provided Makefile target which creates the output directories with correct ownership before launching the container:
 
 ```
-docker run -it --rm \
-  -v $(pwd)/findings:/fuzzing/findings \
-  -v $(pwd)/findings-qemu:/fuzzing/findings-qemu \
-  cs412-fuzz-env bash
+make run-docker
 ```
 
 ### **3\. Launch the Instrumented Campaign (White-box)**
@@ -75,7 +76,15 @@ This target compiles the library with standard gcc (no instrumentation) and laun
 make fuzz-qemu
 ```
 
-### **5\. Generate Reports and Plots**
+### **5\. Validate Setup with Synthetic Bug (Q5)**
+
+To prove the fuzzer works correctly, run a campaign against a version of libpng with a deliberate heap overflow injected into `pngread.c`. AFL++ should find a crash within minutes.
+
+```
+make fuzz-bugged
+```
+
+### **6\. Generate Reports and Plots**
 
 After running the campaigns for at least 30 minutes, generate the visual progress plots required for the report:
 
@@ -83,7 +92,7 @@ After running the campaigns for at least 30 minutes, generate the visual progres
 make plot
 ```
 
-### **6\. Clean Artifacts**
+### **7\. Clean Artifacts**
 
 To reset the environment and remove findings:
 

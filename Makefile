@@ -5,6 +5,7 @@ LIB_VERSION = 1.2.56
 LIB_DIR = libpng-$(LIB_VERSION)
 # vanilla directory for black-box comparison
 LIB_DIR_QEMU = $(LIB_DIR)_qemu
+LIB_DIR_BUGGED = $(LIB_DIR)_bugged
 
 # 2. PATHS AND TARGETS
 HARNESS_SRC = src/harness.c
@@ -19,7 +20,7 @@ PNG_URL = https://download.sourceforge.net/libpng/$(PNG_TARBALL)
 # Path to the AFL++ utility patches
 AFL_PATCH = /AFLplusplus/utils/libpng_no_checksum/libpng-nocrc.patch
 
-.PHONY: all build build-qemu build-persistent fuzz fuzz-qemu plot clean build-docker bootstrap-libpng
+.PHONY: all build build-qemu build-bugged build-persistent fuzz fuzz-qemu fuzz-bugged plot clean build-docker run-docker bootstrap-libpng
 
 all: build build-qemu build-persistent
 
@@ -66,7 +67,19 @@ build-qemu:
 		-I$(LIB_DIR_QEMU) $(LIB_DIR_QEMU)/.libs/libpng12.a \
 		-lz -lm -o harness_blackbox
 
-# 5. PERSISTENT MODE BUILD (for Q8)
+# 5. BUGGED BUILD (Instrumented + ASan + synthetic heap overflow for validation)
+build-bugged:
+	@echo "[*] Setting up bugged build for fuzzer validation..."
+	$(MAKE) bootstrap-libpng
+	cd $(LIB_DIR_BUGGED) && (patch -p0 -N < $(AFL_PATCH) || true)
+	cd $(LIB_DIR_BUGGED) && \
+	CC=$(AFL_CC) CFLAGS="-fsanitize=address -g -O1" ./configure --disable-shared && \
+	make -j$$(nproc)
+	$(AFL_CC) -fsanitize=address -g -O1 $(HARNESS_SRC) \
+		-I$(LIB_DIR_BUGGED) $(LIB_DIR_BUGGED)/.libs/libpng12.a \
+		-lz -lm -o harness_bugged
+
+# 6. PERSISTENT MODE BUILD (for Q8)
 build-persistent: build
 	@echo "[*] Building persistent mode harness..."
 	$(AFL_CC) -fsanitize=address -g -O1 $(HARNESS_PERSISTENT_SRC) \
@@ -75,19 +88,35 @@ build-persistent: build
 
 # 6. EXECUTION TARGETS
 fuzz: build
+	rm -rf findings/default
 	afl-fuzz -i $(SEEDS) -o findings -x $(DICT) -- ./harness_whitebox @@
 
 fuzz-qemu: build-qemu
+	rm -rf findings-qemu/default
 	afl-fuzz -Q -i $(SEEDS) -o findings-qemu -x $(DICT) -- ./harness_blackbox @@
+
+fuzz-bugged: build-bugged
+	rm -rf findings-bugged/default
+	afl-fuzz -i $(SEEDS) -o findings-bugged -x $(DICT) -- ./harness_bugged @@
 
 plot:
 	afl-plot findings/default/ plot_output/
 	afl-plot findings-qemu/default/ plot_output_qemu/
+	afl-plot findings-bugged/default/ plot_output_bugged/
 
 clean:
-	rm -rf findings/ findings-qemu/ plot_output/ plot_output_qemu/
-	rm -f harness_whitebox harness_blackbox harness_persistent
-	rm -rf $(LIB_DIR) $(LIB_DIR_QEMU) *.tar.gz
+	rm -rf findings/ findings-qemu/ findings-bugged/ plot_output/ plot_output_qemu/ plot_output_bugged/
+	rm -f harness_whitebox harness_blackbox harness_persistent harness_bugged
+	rm -rf $(LIB_DIR) $(LIB_DIR_QEMU) $(LIB_DIR_BUGGED) *.tar.gz
 
 build-docker:
 	docker build -t cs412-fuzz-env .
+
+run-docker:
+	mkdir -p findings findings-qemu findings-bugged plot_output plot_output_qemu plot_output_bugged
+	docker run -it --rm \
+		--user $(shell id -u):$(shell id -g) \
+		-v $(shell pwd)/findings:/fuzzing/findings \
+		-v $(shell pwd)/findings-qemu:/fuzzing/findings-qemu \
+		-v $(shell pwd)/findings-bugged:/fuzzing/findings-bugged \
+		cs412-fuzz-env bash

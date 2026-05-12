@@ -19,16 +19,14 @@ WORKDIR /fuzzing
 # Copy the local repository (harness, patches, etc.) into the container
 COPY . .
 
-# Download libpng 1.2.56 and extract two copies: one original and one that we will patch with a synthetic bug
+# Download libpng 1.2.56 and extract three copies: instrumented, QEMU, and bugged
 RUN wget https://download.sourceforge.net/libpng/libpng-1.2.56.tar.gz && \
-    # Extract original (untouched) copy
     tar xf libpng-1.2.56.tar.gz && \
-    mv libpng-1.2.56 libpng-1.2.56 && \
-    # Extract a second copy which we will patch inside the image
-    tar xf libpng-1.2.56.tar.gz && \
-    mv libpng-1.2.56 libpng-1.2.56_bugged && \
-    # Apply container-only synthetic bug to the bugged tree only
+    cp -a libpng-1.2.56 libpng-1.2.56_qemu && \
+    cp -a libpng-1.2.56 libpng-1.2.56_bugged && \
+    # Apply synthetic heap overflow to the bugged tree only
     python3 /fuzzing/patches/insert_synthetic.py libpng-1.2.56_bugged/pngread.c || true && \
+    mkdir -p findings findings-qemu findings-bugged plot_output plot_output_qemu plot_output_bugged && \
     chown -R ubuntu:ubuntu /fuzzing
 
 # Environment variables to optimize AFL++ behavior in Docker
