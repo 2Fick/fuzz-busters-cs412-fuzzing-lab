@@ -1,51 +1,175 @@
 \documentclass[letterpaper,twocolumn,10pt]{article}
-\usepackage{usenix2019_v3}
+
+% --- STRICT USENIX STYLE SPECIFICATIONS ---
+% Manual emulation of the USENIX layout requirements.
+\usepackage[letterpaper, top=1in, bottom=1in, left=0.75in, right=0.75in, columnsep=0.25in]{geometry}
+
+% Standard PDFLaTeX compatible packages
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[english]{babel}
+\usepackage{times} % Use Times font which is standard for USENIX-style reports
+
+\usepackage{titlesec}
+\titleformat{\section}{\large\bfseries\uppercase}{\thesection}{1em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{1em}{}
+\titlespacing*{\section}{0pt}{12pt plus 4pt minus 2pt}{6pt plus 2pt minus 2pt}
+
+% --- ADDITIONAL PACKAGES ---
+\usepackage{amsmath}
+\usepackage{booktabs}
 \usepackage{graphicx}
 \usepackage{listings}
 \usepackage{xcolor}
-\usepackage{hyperref}
-\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{url}
+\usepackage[colorlinks=true, linkcolor=blue, urlcolor=blue]{hyperref}
 
+\graphicspath{{images/}}
+% Code listing style
 \lstset{
-  basicstyle=\ttfamily\footnotesize,
-  breaklines=true,
-  frame=single,
-  backgroundcolor=\color{gray!10},
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    frame=single,
+    backgroundcolor=\color{gray!5},
+    keywordstyle=\color{blue},
+    commentstyle=\color{green!50!black},
+    stringstyle=\color{orange},
+    captionpos=b
+}
+
+% --- DOCUMENT INFO ---
+\date{} % USENIX format omits the date
+
+\title{\Large \bf CS-412 Software Security: Fuzzing Lab Report \\ Fuzzing of libpng 1.2.56}
+
+\author{
+{\rm Sylvain Pichot}
+\and
+{\rm Jeanne De Marmiés}
+\and
+{\rm Erik Hübner}
+\and
+{\rm Youcef Amar}
 }
 
 \begin{document}
 
-\title{CS-412 Fuzzing Lab: Coverage-Guided Fuzzing of libpng 1.2.56}
-
-\author{
-  Sylvain Pichot \quad Jeanne De Marmiés \quad Erik Hübner \quad Youcef Amar \\
-  EPFL --- School of Computer and Communication Sciences, Spring 2026
-}
-
 \maketitle
 
-%==============================================================================
-\section{Q1 --- Harness Design}
-%==============================================================================
+% --- ABSTRACT ---
+\begin{abstract}
+This report details a coverage-guided fuzzing campaign against libpng 1.2.56 using AFL++. We evaluate the library's security through both instrumented (white-box) and QEMU-mode (black-box) fuzzing. Our results quantify the performance impact of AddressSanitizer (ASan) and persistent mode, while investigating the code coverage achieved through mutation-based analysis.
+\end{abstract}
 
-% TODO
+\section{Q1: Harness Design}
 
-%==============================================================================
-\section{Q2 --- Instrumentation and Sanitizers}
-%==============================================================================
+\subsection{Entry Point Justification}
+For our fuzzing campaign, we selected the \texttt{libpng 1.2.56} decoder as our
+primary target. The entry point of our harness utilizes the low-level API sequence:
+\texttt{png\_read\_info()}, \texttt{png\_set\_expand()},
+\texttt{png\_read\_update\_info()}, and \texttt{png\_read\_row()}.
 
-% TODO
+\textbf{Justification:} The decoder represents the most critical attack surface in
+any image processing library because it handles untrusted, complex bitstreams from
+external sources. We chose the low-level API over high-level convenience functions
+(like \texttt{png\_read\_png}) to gain granular control over the library's internal
+state. Specifically, by manually calling \texttt{png\_set\_expand()}, we force the
+fuzzer to explore transformation paths (e.g., converting indexed colors to RGB) that
+are often prone to memory corruption and were the source of historical vulnerabilities
+like CVE-2015-8126.
 
-%==============================================================================
-\section{Q3 --- Seed Corpus and Dictionary}
-%==============================================================================
+\textbf{Alternatives Considered:}
+\begin{itemize}
+    \item \textbf{Encoder:} Rejected because encoders typically process trusted data
+    already in memory. Fuzzing the encoder is less likely to yield security-relevant
+    vulnerabilities in a real-world threat model.
+    \item \textbf{High-level API (\texttt{png\_read\_png}):} Rejected because it
+    automatically allocates memory for the entire image based on header dimensions.
+    This makes the fuzzer highly susceptible to Out-of-Memory (OOM) ``zip bombs,''
+    where a malformed header claims massive dimensions, crashing the fuzzer without
+    discovering a real bug.
+    \item \textbf{Other Libraries (Sixel/SDL):} While interesting, \texttt{libpng}
+    1.2.56 was selected because its documented historical bugs (e.g., CVE-2016-10087)
+    provide a robust benchmark for validating our instrumentation and ASan setup.
+\end{itemize}
 
-% TODO
+\subsection{Data Flow and Guard Rationale}
+The data flow originates from \texttt{AFL++}, which provides mutated inputs via a
+file path in \texttt{argv[1]}. This file is opened and linked to the
+\texttt{png\_struct} via \texttt{png\_init\_io()}, serving as the source for all
+subsequent library calls.
 
-%==============================================================================
-\section{Q4 --- Campaign Analysis}
-%==============================================================================
+\textbf{Rationale for Code Guards:}
+\begin{itemize}
+    \item \textbf{\texttt{setjmp(png\_jmpbuf(png))}}: This is the most critical guard
+    for fuzzer stability. Since \texttt{libpng} uses \texttt{longjmp} for internal
+    error handling (e.g., on malformed chunks), this guard catches those jumps.
+    Without it, every invalid PNG would cause a process termination that AFL++ would
+    incorrectly flag as a ``crash,'' leading to thousands of false positives.
+    \item \textbf{Dimension Limits (\texttt{height * rowbytes < 10MB})}: This prevents
+    OOM DoS attacks against the fuzzer. Mutated headers often contain gargantuan
+    width/height values; this guard ensures we only allocate memory for reasonable
+    sizes, maintaining high execution speed (exec/s).
+    \item \textbf{\texttt{png\_read\_end()}}: This call is vital for reaching ancillary
+    chunks (like \texttt{tEXt} or \texttt{zTXt}) located after the IDAT stream. This
+    ensures coverage for metadata-related vulnerabilities such as CVE-2016-10087.
+    \item \textbf{Strict Cleanup}: By calling \texttt{png\_destroy\_read\_struct}, we
+    ensure that memory is freed between every iteration. This is essential for
+    long-running campaigns and persistent mode to prevent ``memory accumulation''
+    which would eventually cause a crash unrelated to the library's logic.
+\end{itemize}
 
+\section{Q2: Instrumentation and Sanitizers}
+
+\subsection{Compiler Flags and Instrumentation}
+We used the following flags during the white-box build phase:
+
+\begin{itemize}
+    \item \texttt{CC=afl-clang-fast}: This selects the AFL++ LLVM-based compiler
+    wrapper. It performs IR-level instrumentation by injecting coverage callbacks
+    at every branch during compilation. This allows AFL++ to track edge coverage
+    in a 64KB shared memory bitmap.
+    \item \texttt{-fsanitize=address}: Enables AddressSanitizer (ASan). ASan uses
+    ``shadow memory'' (mapping 8 bytes of application memory to 1 byte of shadow
+    memory) to track memory state. It places ``redzones'' around stack and heap
+    objects to detect out-of-bounds accesses immediately.
+    \item \texttt{-g}: Includes debug symbols. While not strictly necessary for
+    fuzzing, it is vital for triage (Q5) to map crash addresses back to source
+    code lines.
+    \item \texttt{-O1}: We chose moderate optimization. High optimization
+    (\texttt{-O3}) can sometimes inline vulnerable code or optimize away
+    ``useless'' memory accesses that ASan needs to monitor.
+\end{itemize}
+
+\subsection{Library Patches: CRC Removal}
+We applied the \texttt{libpng-nocrc.patch} provided in the AFL++ utilities. This
+patch modifies \texttt{png\_crc\_finish()} to return 0 (success) unconditionally.
+
+\textbf{Impact on Path Discovery:} This is the most critical modification for
+\texttt{libpng}. Every PNG chunk contains a 4-byte CRC-32 checksum. When AFL++
+mutates the chunk data (the ``Havoc'' stage), the checksum becomes invalid.
+Without this patch, the library calls \texttt{png\_error()} and terminates
+immediately upon seeing an invalid CRC.
+
+If omitted, the fuzzer would be trapped at the library's ``front door.'' It would
+find thousands of inputs that trigger the same CRC error path but would never
+reach the deeper, vulnerable logic (decompression, palette handling, or pixel
+transformations). The patch essentially disables the data integrity gatekeeper,
+allowing mutated inputs to reach the complex attack surface.
+
+\subsection{Impact of ASan Omission}
+If \texttt{ASan} were omitted, the fuzzer would only detect crashes that cause a
+\texttt{SIGSEGV} (e.g., jumping to invalid memory). Subtle bugs like a 1-byte
+heap-buffer-overflow or an out-of-bounds read that does not hit unmapped memory
+would go completely unnoticed, resulting in a false sense of security.
+
+
+
+\section{Q3: Seed Corpus and Dictionary}
+Describe your seed selection strategy and dictionary entries. Quantify the contribution of the dictionary versus havoc/splice strategies using metrics from the AFL++ status screen.
+
+\section{Q4: Campaign Analysis}
 The white-box campaign ran for 75,277 seconds and executed 62,454,465 test cases
 at 829.65 exec/s. Final AFL++ status metrics were: corpus count 1,103,
 stability 100.00\%, bitmap coverage 31.69\% (974 of 3,074 edges), cycles done 323,
@@ -69,97 +193,296 @@ inputs at 54,735 s to 1,103 inputs at the end of the run. In other words, later 
 mostly produced new inputs that exercised already-known paths rather than discovering new
 control-flow. The campaign therefore reached practical saturation for this harness/library pair.
 
-%==============================================================================
-\section{Q5 --- Crash Triage}
-%==============================================================================
+%=====================================================================
+\section{Q5: Crash Triage}
+%=====================================================================
 
-Our white-box campaign found no real crashes after 62.4M executions. This is acceptable and defensible for libpng 1.2.56: it is a heavily analyzed target, and the CRC patch plus harness guards significantly reduced false positives and OOM-style noise.
+Our white-box campaign found no real crashes after 62.4M executions. This is
+acceptable and defensible for \texttt{libpng 1.2.56}: it is a heavily analyzed
+target, and the CRC patch plus harness guards significantly reduced false
+positives and OOM-style noise.
 
-We validated our setup by doing a synthetic bug injection.
-A single heap-buffer-overflow was added inside `png_read_row()` immediately after the library copies the decompressed row into `prev_row`. In the container, this is applied only to a separate copy of the library (`libpng-1.2.56_bugged`), while the original `libpng-1.2.56` remains untouched for the normal campaign. The injected code writes past the `prev_row` allocation, producing a deterministic out-of-bounds write that AddressSanitizer (ASan) catches when the harness is compiled with `-fsanitize=address`.
+We validated our setup by injecting a synthetic bug. A single heap-buffer-overflow
+was added inside \texttt{png\_read\_row()} immediately after the library copies the
+decompressed row into \texttt{prev\_row}. This is applied only to a separate copy
+of the library (\texttt{libpng-1.2.56\_bugged}), while the original
+\texttt{libpng-1.2.56} remains untouched for the normal campaign. The injected
+code writes past the \texttt{prev\_row} allocation, producing a deterministic
+out-of-bounds write that ASan catches when the harness is compiled with
+\texttt{-fsanitize=address}.
 
-Why this location: `png_read_row()` is on the normal input-processing path and
-is exercised by the existing harness loop.
+Why this location: \texttt{png\_read\_row()} is on the normal input-processing
+path and is exercised by the existing harness loop.
 
 Reproduction steps (exact commands):
 \begin{lstlisting}
-# From host: start container with repo mounted
-docker run --rm -it -v "$PWD":/work -w /work cs412-fuzz-env bash
+# From host: enter the container
+make run-docker
 
-# Inside container: build instrumented libpng + harness against bugged copy
-make build LIB_DIR=libpng-1.2.56_bugged
+# Inside container: build and fuzz the bugged harness
+make fuzz-bugged
 
-# Quick single-run test (ASan should abort and print heap-buffer-overflow)
-./harness_whitebox seeds/basn2c16.png
+# Reproduce a crash directly
+./harness_bugged findings-bugged/default/crashes/id:000000*
 
-# 60s AFL++ validation fuzz (should find and save crashes)
-timeout 60s afl-fuzz -i seeds/ -o findings_synth -x dictionaries/png.dict -- ./harness_whitebox @@
+# Minimize the crash input
+afl-tmin -i findings-bugged/default/crashes/id:000000* \
+         -o minimized.png -- ./harness_bugged @@
 
-# Inspect found crashes
-ls -la findings_synth/default/crashes/ | head -20
+# Get full ASan stack trace
+ASAN_OPTIONS=symbolize=1 ./harness_bugged minimized.png
 \end{lstlisting}
 
-Revert the synthetic bug (safe):
-\begin{lstlisting}
-# Rebuild the normal, untouched baseline library
-make build LIB_DIR=libpng-1.2.56
-\end{lstlisting}
+AFL++ found 10 crashes within 85 seconds. The minimized input was reduced from
+357 to 325 bytes by \texttt{afl-tmin}. The resulting ASan stack trace (see
+Figure~\ref{fig:status_bugged} and Sub-Appendix C) confirms a heap-buffer-overflow WRITE of 1 byte at
+\texttt{pngread.c:789}, 4 bytes before an 885-byte \texttt{row\_ptr} allocation.
 
-This synthetic bug demonstration proves that (1) our build pipeline includes AddressSanitizer, (2) ASan is active at runtime and detects memory errors, and (3) AFL++ can fuzz instrumented binaries without issues. Since the 62.4M-execution white-box campaign produced no crashes despite reaching 31.69\% coverage, the most reasonable conclusion is that libpng 1.2.56 does not contain an easily reachable memory-corruption bug under our harness configuration.
+This synthetic bug demonstration proves that (1) our build pipeline includes
+AddressSanitizer, (2) ASan is active at runtime and detects memory errors, and
+(3) AFL++ can find crashes in instrumented binaries within minutes. Since the
+62.4M-execution white-box campaign produced no crashes despite reaching 31.69\%
+coverage, the most reasonable conclusion is that \texttt{libpng 1.2.56} does not
+contain an easily reachable memory-corruption bug under our harness configuration.
 
-%==============================================================================
-\section{Q6 --- Attack Surface Analysis}
-%==============================================================================
 
-% TODO
+\section{Q6: Attack Surface Analysis}
 
-%==============================================================================
-\section{Q7 --- Binary-Only Fuzzing with QEMU Mode}
-%==============================================================================
+\subsection{Applications and Attack Scenarios}
+\texttt{libpng} is critical for cross-platform image rendering. We identify two primary attack vectors:
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Mozilla Firefox (Web Rendering):} Browsers automatically parse PNGs from untrusted web servers. A malicious PNG triggering a buffer overflow (e.g., CVE-2015-8126) allows \textbf{code execution within the renderer process}, which an attacker could chain with a sandbox escape to achieve full Remote Code Execution (RCE).
+    \item \textbf{ImageMagick (Server-side Processing):} Web backends use this to process user uploads. A malformed chunk triggering a NULL-pointer dereference (CVE-2016-10087) causes a \textbf{Denial of Service (DoS)} or memory disclosure, crashing the thumbnail generation service.
+\end{itemize}
 
-% TODO
+\subsection{Coverage Gaps and Security Implications}
+Our harness focuses on linear decoding, leaving several critical paths unexercised:
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Encoding API (\texttt{png\_write\_*}):} Functions in \texttt{pngwrite.c} and \texttt{pngwtran.c} are never called. Although encoders typically handle trusted data, vulnerabilities can arise during raw-to-chunk conversion if metadata checks are inconsistent.
+    \item \textbf{Adam7 Interlacing (\texttt{png\_do\_read\_interlace}):} Our harness reads rows linearly and does not invoke interlacing logic in \texttt{pngrutil.c}. Interlacing involves complex, non-linear coordinate math that is historically prone to \textbf{off-by-one errors} and heap corruption when calculating buffer offsets for incomplete passes.
+\end{enumerate}
+An attacker targeting Firefox's image rendering pipeline or ImageMagick's upload processing could exploit either gap without our campaign detecting it.
 
-%==============================================================================
-\section{Q8 --- Instrumentation Depth and Performance}
-%==============================================================================
 
-% TODO
+\section{Q7: Binary-Only Fuzzing with QEMU Mode}
 
-%==============================================================================
+\subsection{Comparative Analysis}
+We executed a parallel campaign using AFL++ QEMU mode (\texttt{-Q}) against an
+uninstrumented \texttt{libpng} binary compiled with standard \texttt{gcc} and no
+sanitizers. The results after $\sim$35 minutes (Figure~\ref{fig:status_comparison})
+are summarized in Table~\ref{tab:qemu_comparison}:
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{l l l}
+\hline
+\textbf{Metric} & \textbf{Instrumented} & \textbf{QEMU Mode (-Q)} \\ \hline
+Exec Speed      & 861.8 exec/s          & 2,384 exec/s            \\
+Map Density     & 8.65\%                & 0.74\%                  \\
+Corpus Count    & 614 items             & 872 items               \\ \hline
+\end{tabular}
+\caption{Comparison metrics after 35 minutes of fuzzing.}
+\label{tab:qemu_comparison}
+\end{table}
+
+\subsection{Analysis and Differences}
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Execution Speed:} QEMU mode achieved 2,384 exec/s vs.\ 861.8 exec/s
+    for the instrumented build. The instrumented build is slowed by
+    \textbf{AddressSanitizer (ASan)}, which inserts a shadow-memory check before
+    every memory access. Without ASan, native compile-time instrumentation is
+    typically 10--50$\times$ faster than QEMU emulation; here ASan inverts the
+    relationship.
+    \item \textbf{Map Density (Coverage):} The instrumented campaign reached
+    8.65\% edge coverage vs.\ only 0.74\% for QEMU. Compile-time instrumentation
+    captures every branch transition at the IR level, whereas QEMU's block-level
+    translation logs coarser basic-block transitions and frequently collapses
+    multiple branches into a single translated block.
+    \item \textbf{Corpus Count:} QEMU produced a larger corpus (872 vs.\ 614
+    items) despite lower coverage. Without precise edge feedback, AFL++ accepts
+    test cases that do not exercise genuinely new control-flow, resulting in a
+    larger but more redundant corpus.
+\end{itemize}
+
+\subsection{Coverage Collection Mechanism}
+\textbf{Compile-Time Instrumentation} (\texttt{afl-clang-fast}) statically injects
+coverage checkpoints at every branch during compilation, adding only a few
+instructions per edge with no translation overhead at runtime.
+
+\textbf{QEMU Mode} uses \textbf{Dynamic Binary Translation} via the Tiny Code
+Generator (TCG): guest instruction blocks are translated to host code at runtime,
+and AFL++ hooks the TCG pipeline to log basic-block transitions. This emulation
+layer adds substantial per-block overhead and produces coarser coverage maps,
+explaining the 11.7$\times$ lower map density despite a higher raw execution rate.
+
+\section{Q8: Instrumentation Depth \& Performance}
+
+\subsection{Instrumented Edge Counts}
+At startup, \texttt{afl-fuzz} reports the total number of instrumented edges in
+the harness binary via \texttt{fuzzer\_stats}. For our final \texttt{harness\_whitebox}
+binary, the total is \textbf{3,074 edges}. This count covers both the libpng
+1.2.56 library code and the small \texttt{main()} function in our harness
+(\texttt{src/harness.c}). The harness itself contributes only a handful of edges
+(file open, argument check, cleanup), so the overwhelming majority of the 3,074
+edges originate from libpng's parsing, decompression, and transformation pipeline.
+
+After 75,277 seconds of fuzzing, the campaign reached \textbf{974 edges
+(31.69\% map density)}. The remaining 2,100 edges (68.31\%) were never
+triggered. Many code paths in libpng require very specific input conditions to
+activate, such as Adam7 interlacing (\texttt{png\_do\_read\_interlace} in
+\texttt{pngrutil.c}), 16-bit depth processing, palette-mode expansion, or rare
+ancillary chunks (\texttt{zTXt}, \texttt{iTXt}). Mutation-based fuzzing without
+structure-aware generation struggles to produce the precise byte sequences needed
+to unlock these paths, causing the campaign to plateau at roughly one third of
+total coverage.
+
+\subsection{Execution Speed Benchmark}
+We measured \texttt{exec speed} under three configurations using the same
+libpng 1.2.56 target compiled with the CRC patch applied (see
+\hyperref[fig:status_nosanit]{Figure \ref*{fig:status_nosanit}} for config~(1),
+\hyperref[fig:status_whitebox]{Figure \ref*{fig:status_whitebox}} for config~(2),
+and \hyperref[fig:status_persistent]{Figure \ref*{fig:status_persistent}} for
+config~(3)):
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lr}
+\toprule
+Configuration & Exec Speed (exec/s) \\
+\midrule
+(1) No sanitizer + fork mode  &  6,607 \\
+(2) ASan + fork mode          &    830 \\
+(3) ASan + persistent mode    & 44,400 \\
+\bottomrule
+\end{tabular}
+\caption{Execution speed across three instrumentation configurations.}
+\label{tab:execspeed}
+\end{table}
+
+\textbf{No sanitizer + fork (6,607 exec/s):} Without ASan, there is no shadow
+memory to initialize or maintain, and no redzone checks on every allocation and
+access. The process still pays the \texttt{fork()} cost per test case, which
+caps throughput.
+
+\textbf{ASan + fork (830 exec/s):} Adding ASan reduces throughput by roughly
+\textbf{8$\times$}. ASan maps one shadow byte for every 8 bytes of application
+memory and inserts inline checks before every memory access. For libpng, which
+performs many small heap allocations per image (row buffers, info structs, zlib
+state), this overhead accumulates significantly per execution.
+
+\textbf{ASan + persistent mode (44,400 exec/s):} Persistent mode eliminates the
+\texttt{fork()} cost entirely by looping inside a single process using the
+\texttt{\_\_AFL\_LOOP()} macro. The fuzzer delivers test cases via shared memory,
+yielding a \textbf{53$\times$ speedup} over ASan + fork. ASan remains active but
+its initialization cost is amortized over 10,000 iterations before the process
+restarts.
+
+\section*{Acknowledgments}
+Optional section for acknowledging collaborators or tools.
+
+\section*{Availability}
+Specify where the fuzzing environment (Dockerfile, Makefile, Harness) and campaign artifacts can be found.
+
+\section{Conclusion}
+Final summary of campaign efficacy.
+
+% --- APPENDIX CATEGORY ---
+\clearpage
 \appendix
-\section*{Appendix}
-%==============================================================================
 
-\subsection*{A. Harness Source Code}
-\label{app:harness}
+\begin{center}
+    \Large \textbf{Appendix}
+\end{center}
+\vspace{0.5cm}
 
-% TODO
+\section{Sub-Appendix A: AFL++ Status Screens}
+\label{app:status_screens}
+Contains screenshots of the AFL++ status UI for both campaigns.
 
-\subsection*{B. White-Box Campaign --- AFL++ Status Screen}
-\label{app:whitebox-status}
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\columnwidth]{status_whitebox.png}
+  \caption{AFL++ UI for the instrumented campaign.}
+  \label{fig:status_whitebox}
+\end{figure}
 
-% TODO
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\columnwidth]{status_qemu.png}
+  \caption{AFL++ UI for the binary-only (QEMU) campaign.}
+  \label{fig:status_qemu}
+\end{figure}
 
-\subsection*{C. White-Box Campaign --- afl-plot Output}
-\label{app:whitebox-plot}
+\begin{figure}[h] 
+    \centering
+    \includegraphics[width=1\columnwidth]{status_comparison.png}
+    \caption{Comparison of AFL++ status screens after 35 minutes: Instrumented White-box (Left) vs. QEMU Black-box (Right).}
+    \label{fig:status_comparison}
+\end{figure}
 
-% TODO
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\columnwidth]{harness_nosanit.png}
+  \caption{AFL++ status screen for the campaign without AddressSanitizer.}
+  \label{fig:status_nosanit}
+\end{figure}
 
-\subsection*{D. QEMU Campaign --- AFL++ Status Screen}
-\label{app:qemu-status}
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\columnwidth]{harness_bugged.png}
+  \caption{AFL++ status screen showing the detection of unique crashes when fuzzing the bugged version of the harness.}
+  \label{fig:status_bugged}
+\end{figure}
 
-% TODO
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.8\columnwidth]{harness_persistent.png}
+  \caption{Maximum performance: Native build using Persistent Mode.}
+  \label{fig:status_persistent}
+\end{figure}
 
-\subsection*{E. QEMU Campaign --- afl-plot Output}
-\label{app:qemu-plot}
+\section{Sub-Appendix B: Coverage Plots}
+\label{app:plots}
+Contains the generated plots showing coverage (edges) over time.
 
-% TODO
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\columnwidth]{edges_whitebox.png}
+  \caption{Edge discovery plot (Instrumented).}
+  \label{fig:edges_whitebox}
+\end{figure}
 
-\subsection*{F. Synthetic Bug --- ASan Stack Trace}
-\label{app:synthetic}
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\columnwidth]{edges_qemu.png}
+  \caption{Edge discovery plot (QEMU mode).}
+  \label{fig:edges_qemu}
+\end{figure}
 
-Synthetic buffer overflow test demonstrates ASan detection:
-Output: buffer overflow detected: terminated
-Confirms -fsanitize=address is active and detecting out-of-bounds access.
+\section{Sub-Appendix C: Triage and Source Code}
+\label{app:triage}
+Contains the harness source code and crash triage reports.
+
+\begin{lstlisting}[caption=ASan Stack Trace for Q5 Triage]
+==1966515==ERROR: AddressSanitizer: heap-buffer-overflow on address
+0x51800000047c at pc 0x5c1dd933c6cb bp 0x7ffdb2a6a490
+WRITE of size 1 at 0x51800000047c thread T0
+    #0 0x5c1dd933c6ca in png_read_row
+           /fuzzing/libpng-1.2.56_bugged/pngread.c:789:48
+    #1 0x5c1dd932fbbb in main /fuzzing/src/harness.c:49:17
+
+0x51800000047c is located 4 bytes before 885-byte region
+[0x518000000480,0x5180000007f5)
+allocated by thread T0 here:
+    #0 0x5c1dd92ee2f3 in malloc (/fuzzing/harness_bugged+0xd12f3)
+    #1 0x5c1dd932fb73 in main /fuzzing/src/harness.c:46:29
+
+SUMMARY: AddressSanitizer: heap-buffer-overflow
+/fuzzing/libpng-1.2.56_bugged/pngread.c:789:48 in png_read_row
+==1966515==ABORTING
+\end{lstlisting}
+
 
 \end{document}
