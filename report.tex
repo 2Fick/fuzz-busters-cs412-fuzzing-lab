@@ -301,9 +301,11 @@ AddressSanitizer, (2) ASan is active at runtime and detects memory errors, and
 
 \textbf{Why no real bugs were found:} Three factors explain the absence of crashes
 in the main campaign. First, \texttt{libpng 1.2.56} is a mature, extensively
-audited library --- known vulnerabilities such as CVE-2015-8126 and CVE-2016-10087
-were patched in earlier releases (1.2.54 and 1.2.57 respectively), leaving few
-low-hanging memory-safety bugs reachable by mutation-based fuzzing. Second, our
+audited library --- CVE-2015-8126 was already patched in 1.2.54 (before our
+target), and while CVE-2016-10087 technically affects 1.2.56, it is a
+NULL-pointer dereference triggered by a specific \texttt{png\_set\_text}
+code path that our harness never exercises, leaving few low-hanging
+memory-safety bugs reachable by our mutation-based campaign. Second, our
 campaign reached only 31.69\% edge coverage (974 of 3,074 edges): the remaining
 68\% of code paths --- including Adam7 interlacing, 16-bit depth processing, and
 compressed ancillary chunks --- were never exercised, so bugs in those paths could
