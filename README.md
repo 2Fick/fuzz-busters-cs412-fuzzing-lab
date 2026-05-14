@@ -1,6 +1,8 @@
 # **CS-412 Software Security \- Fuzzing Lab**
 
-This repository contains the reproducible fuzzing environment for the CS-412 Fuzzing Lab at EPFL (Spring 2026).
+![EPFL](https://img.shields.io/badge/EPFL-CS--412-red?style=flat-square) ![AFL++](https://img.shields.io/badge/Fuzzer-AFL%2B%2B-orange?style=flat-square) ![Docker](https://img.shields.io/badge/Environment-Docker-blue?style=flat-square)
+
+This repository contains the reproducible fuzzing environment for the **CS-412 Software Security** Fuzzing Lab at EPFL (Spring 2026). The goal is to discover memory-safety vulnerabilities in real-world libraries using coverage-guided and black-box fuzzing with AFL++.
 
 ## **Project Structure**
 
