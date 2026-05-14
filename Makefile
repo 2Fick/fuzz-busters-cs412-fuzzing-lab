@@ -20,7 +20,7 @@ PNG_URL = https://download.sourceforge.net/libpng/$(PNG_TARBALL)
 # Path to the AFL++ utility patches
 AFL_PATCH = /AFLplusplus/utils/libpng_no_checksum/libpng-nocrc.patch
 
-.PHONY: all build build-qemu build-bugged build-persistent fuzz fuzz-qemu fuzz-bugged plot clean build-docker run-docker bootstrap-libpng
+.PHONY: all build build-qemu build-bugged build-persistent build-nosanit fuzz fuzz-qemu fuzz-bugged fuzz-persistent fuzz-nosanit plot clean build-docker run-docker bootstrap-libpng
 
 all: build build-qemu build-persistent
 
@@ -86,6 +86,18 @@ build-persistent: build
 		-I$(LIB_DIR) $(LIB_DIR)/.libs/libpng12.a \
 		-lz -lm -o harness_persistent
 
+# 7. NO-SANITIZER BUILD (for Q8 baseline benchmark)
+build-nosanit:
+	@echo "[*] Building no-sanitizer instrumented harness for Q8 benchmark..."
+	$(MAKE) bootstrap-libpng
+	cd $(LIB_DIR) && (patch -p0 -N < $(AFL_PATCH) || true)
+	cd $(LIB_DIR) && \
+	CC=$(AFL_CC) CFLAGS="-g -O1" ./configure --disable-shared && \
+	make -j$$(nproc)
+	$(AFL_CC) -g -O1 $(HARNESS_SRC) \
+		-I$(LIB_DIR) $(LIB_DIR)/.libs/libpng12.a \
+		-lz -lm -o harness_nosanit
+
 # 6. EXECUTION TARGETS
 fuzz: build
 	rm -rf findings/default
@@ -99,14 +111,22 @@ fuzz-bugged: build-bugged
 	rm -rf findings-bugged/default
 	afl-fuzz -i $(SEEDS) -o findings-bugged -x $(DICT) -- ./harness_bugged @@
 
+fuzz-persistent: build-persistent
+	rm -rf findings-persistent/default
+	afl-fuzz -i $(SEEDS) -o findings-persistent -x $(DICT) -- ./harness_persistent
+
+fuzz-nosanit: build-nosanit
+	rm -rf findings-nosanit/default
+	afl-fuzz -i $(SEEDS) -o findings-nosanit -x $(DICT) -- ./harness_nosanit @@
+
 plot:
 	afl-plot findings/default/ plot_output/
 	afl-plot findings-qemu/default/ plot_output_qemu/
 	afl-plot findings-bugged/default/ plot_output_bugged/
 
 clean:
-	rm -rf findings/ findings-qemu/ findings-bugged/ plot_output/ plot_output_qemu/ plot_output_bugged/
-	rm -f harness_whitebox harness_blackbox harness_persistent harness_bugged
+	rm -rf findings/ findings-qemu/ findings-bugged/ findings-persistent/ findings-nosanit/ plot_output/ plot_output_qemu/ plot_output_bugged/
+	rm -f harness_whitebox harness_blackbox harness_persistent harness_bugged harness_nosanit
 	rm -rf $(LIB_DIR) $(LIB_DIR_QEMU) $(LIB_DIR_BUGGED) *.tar.gz
 
 build-docker:
