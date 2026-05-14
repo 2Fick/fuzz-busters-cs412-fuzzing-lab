@@ -65,59 +65,43 @@ This report details a coverage-guided fuzzing campaign against libpng 1.2.56 usi
 \section{Q1: Harness Design}
 
 \subsection{Entry Point Justification}
-For our fuzzing campaign, we selected the \texttt{libpng 1.2.56} decoder as our
-primary target. The entry point of our harness utilizes the low-level API sequence:
+We target the \texttt{libpng 1.2.56} sequential decoder via the low-level API:
 \texttt{png\_read\_info()}, \texttt{png\_set\_expand()},
 \texttt{png\_read\_update\_info()}, and \texttt{png\_read\_row()}.
+The decoder is the highest-value target: it processes fully untrusted input
+through CRC validation, zlib decompression, and pixel transformation, all of
+which have been sources of historical CVEs. Calling \texttt{png\_set\_expand()}
+explicitly forces the fuzzer into colour-transformation paths (palette-to-RGB,
+greyscale expansion) where CVE-2015-8126 originated.
 
-\textbf{Justification:} The decoder represents the most critical attack surface in
-any image processing library because it handles untrusted, complex bitstreams from
-external sources. We chose the low-level API over high-level convenience functions
-(like \texttt{png\_read\_png}) to gain granular control over the library's internal
-state. Specifically, by manually calling \texttt{png\_set\_expand()}, we force the
-fuzzer to explore transformation paths (e.g., converting indexed colors to RGB) that
-are often prone to memory corruption and were the source of historical vulnerabilities
-like CVE-2015-8126.
-
-\textbf{Alternatives Considered:}
-\begin{itemize}
-    \item \textbf{Encoder:} Rejected because encoders typically process trusted data
-    already in memory. Fuzzing the encoder is less likely to yield security-relevant
-    vulnerabilities in a real-world threat model.
-    \item \textbf{High-level API (\texttt{png\_read\_png}):} Rejected because it
-    automatically allocates memory for the entire image based on header dimensions.
-    This makes the fuzzer highly susceptible to Out-of-Memory (OOM) ``zip bombs,''
-    where a malformed header claims massive dimensions, crashing the fuzzer without
-    discovering a real bug.
-    \item \textbf{Other Libraries (Sixel/SDL):} While interesting, \texttt{libpng}
-    1.2.56 was selected because its documented historical bugs (e.g., CVE-2016-10087)
-    provide a robust benchmark for validating our instrumentation and ASan setup.
+\textbf{Alternatives rejected:}
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Encoder:} processes application-supplied, already-validated data;
+    far less likely to contain memory-safety bugs triggered by malformed input.
+    \item \textbf{High-level API (\texttt{png\_read\_png}):} allocates full image
+    buffers based on header dimensions, making the fuzzer trivially OOM-crashable
+    on ``zip bomb'' headers without reaching real parsing logic.
 \end{itemize}
 
 \subsection{Data Flow and Guard Rationale}
-The data flow originates from \texttt{AFL++}, which provides mutated inputs via a
-file path in \texttt{argv[1]}. This file is opened and linked to the
-\texttt{png\_struct} via \texttt{png\_init\_io()}, serving as the source for all
-subsequent library calls.
+AFL++ delivers a mutated file path via \texttt{argv[1]}; \texttt{fopen} opens it
+and \texttt{png\_init\_io()} binds it to the \texttt{png\_struct}, after which all
+subsequent library calls read from that source.
 
-\textbf{Rationale for Code Guards:}
-\begin{itemize}
-    \item \textbf{\texttt{setjmp(png\_jmpbuf(png))}}: This is the most critical guard
-    for fuzzer stability. Since \texttt{libpng} uses \texttt{longjmp} for internal
-    error handling (e.g., on malformed chunks), this guard catches those jumps.
-    Without it, every invalid PNG would cause a process termination that AFL++ would
-    incorrectly flag as a ``crash,'' leading to thousands of false positives.
-    \item \textbf{Dimension Limits (\texttt{height * rowbytes < 10MB})}: This prevents
-    OOM DoS attacks against the fuzzer. Mutated headers often contain gargantuan
-    width/height values; this guard ensures we only allocate memory for reasonable
-    sizes, maintaining high execution speed (exec/s).
-    \item \textbf{\texttt{png\_read\_end()}}: This call is vital for reaching ancillary
-    chunks (like \texttt{tEXt} or \texttt{zTXt}) located after the IDAT stream. This
-    ensures coverage for metadata-related vulnerabilities such as CVE-2016-10087.
-    \item \textbf{Strict Cleanup}: By calling \texttt{png\_destroy\_read\_struct}, we
-    ensure that memory is freed between every iteration. This is essential for
-    long-running campaigns and persistent mode to prevent ``memory accumulation''
-    which would eventually cause a crash unrelated to the library's logic.
+\textbf{Guards and their fuzzing rationale:}
+\begin{itemize}[leftmargin=*]
+    \item \textbf{\texttt{setjmp(png\_jmpbuf(png))}}: libpng signals errors via
+    \texttt{longjmp}. Without this handler every malformed chunk causes an
+    unhandled jump that AFL++ records as a crash, flooding results with false
+    positives.
+    \item \textbf{Dimension limit (\texttt{height * rowbytes < 10\,MB})}: prevents
+    OOM on crafted headers with gargantuan dimensions, keeping execution speed high.
+    \item \textbf{\texttt{png\_read\_end()}}: reads post-IDAT ancillary chunks
+    (\texttt{tEXt}, \texttt{zTXt}, \texttt{iTXt}), exposing the text-chunk parsing
+    code that contains CVE-2016-10087 (\texttt{png\_set\_text\_2}).
+    \item \textbf{Strict cleanup (\texttt{png\_destroy\_read\_struct})}: frees all
+    library state between iterations, preventing memory accumulation that would
+    eventually crash the fuzzer for reasons unrelated to the library's logic.
 \end{itemize}
 
 \section{Q2: Instrumentation and Sanitizers}
@@ -168,53 +152,29 @@ would go completely unnoticed, resulting in a false sense of security.
 
 \section{Q3: Seed Corpus and Dictionary}
 
-\subsection{Seed Corpus Selection}
-We used 9 seed files from the official PNG test suite (\texttt{libpng-1.2.56/contrib/pngsuite/}),
-selected to cover the major PNG colour-space and depth combinations:
-
-\begin{itemize}[leftmargin=*]
-    \item \textbf{basn0g04} --- 4-bit greyscale (baseline, no filter)
-    \item \textbf{basn2c08} --- 8-bit truecolour RGB
-    \item \textbf{basn2c16} --- 16-bit truecolour RGB (exercises 16-bit depth paths)
-    \item \textbf{basn3p08-trns} --- 8-bit indexed palette with transparency chunk (\texttt{tRNS})
-    \item \textbf{basn4a16} --- 16-bit greyscale with alpha channel
-    \item \textbf{basn6a08} --- 8-bit RGBA (all four channels)
-    \item \textbf{g04n3p04} --- 4-bit palette with gamma (\texttt{gAMA} chunk)
-    \item \textbf{s01i3p01} --- 1$\times$1 interlaced palette (minimal interlaced PNG)
-    \item \textbf{s40i3p04} --- 40$\times$40 interlaced palette (larger interlaced PNG)
-\end{itemize}
-
-The selection rationale is structural diversity: each seed exercises a different
-code path through \texttt{png\_read\_info()} and the colour-transformation
-pipeline (\texttt{png\_set\_expand()}). Interlaced seeds (\texttt{s01i3p01},
-\texttt{s40i3p04}) provide entry points for Adam7 interlacing logic. The
-\texttt{tRNS} and \texttt{gAMA} seeds expose ancillary-chunk parsing. Starting
-from small, valid PNGs keeps the initial corpus lean and allows AFL++ to grow
-it organically through mutation.
+\subsection{Seed Corpus}
+We used 9 small, valid PNGs from \texttt{libpng-1.2.56/contrib/pngsuite/},
+chosen for structural diversity: greyscale (4-bit, 16-bit), truecolour RGB
+(8-bit, 16-bit), RGBA, indexed palette with \texttt{tRNS}, palette with
+\texttt{gAMA}, and two interlaced images (\texttt{s01i3p01}, \texttt{s40i3p04}).
+Each seed exercises a distinct code path through \texttt{png\_read\_info()} and
+the \texttt{png\_set\_expand()} transformation pipeline; interlaced seeds seed
+the Adam7 logic that pure mutation rarely reaches. Keeping seeds small (under
+10\,KB) avoids slow calibration and lets AFL++ grow the corpus organically.
 
 \subsection{Dictionary}
-We used the AFL++ standard PNG dictionary
-(\texttt{dictionaries/png.dict}, 27 entries) authored by Michal Zalewski.
-It contains two categories of tokens:
+We used the standard AFL++ PNG dictionary (\texttt{png.dict}, 27 entries).
+In formal grammar terms, the entries are \textbf{terminal symbols} of the PNG
+chunk language: the 8-byte magic header \texttt{\textbackslash x89PNG\ldots}
+(the start symbol) and 26 four-byte chunk-type identifiers
+(\texttt{IHDR}, \texttt{IDAT}, \texttt{IEND}, \texttt{PLTE},
+\texttt{iTXt}, \texttt{zTXt}, \texttt{tRNS}, \texttt{iCCP}, \ldots).
+Without the dictionary, discovering the token \texttt{IHDR} by random bit flips
+has a $1/2^{32}$ probability per byte position; the dictionary lets AFL++ splice
+these terminals directly into mutations, dramatically accelerating discovery of
+chunk-dispatch code paths.
 
-\begin{itemize}[leftmargin=*]
-    \item \textbf{Magic header}: \texttt{\textbackslash x89PNG\textbackslash r\textbackslash n\textbackslash x1a\textbackslash n}
-    --- the 8-byte PNG signature that must appear at offset 0. Inserting this
-    token allows AFL++ to reconstruct a valid file header after havoc mutations
-    destroy it, keeping inputs parseable past the first validity check.
-    \item \textbf{Chunk-type tokens} (26 entries): four-byte ASCII identifiers
-    for every standard PNG chunk (\texttt{IHDR}, \texttt{IDAT}, \texttt{IEND},
-    \texttt{PLTE}, and 22 ancillary chunks such as \texttt{iTXt}, \texttt{zTXt},
-    \texttt{tRNS}, \texttt{iCCP}). When AFL++ splices a token into a mutated
-    file, it can produce a syntactically recognisable chunk type that the parser
-    will attempt to decode, reaching ancillary-chunk handling code that pure
-    bit-level havoc rarely triggers.
-\end{itemize}
-
-\subsection{Dictionary vs.\ Havoc Contribution}
-The AFL++ status screen (\textbf{fuzzing strategy yields}) records, for each
-stage, the number of new corpus entries found per total executions in that stage.
-After the full 20-hour campaign the breakdown was:
+\subsection{Strategy Contribution (from AFL++ status screen)}
 
 \begin{center}
 \small
@@ -222,26 +182,19 @@ After the full 20-hour campaign the breakdown was:
 \toprule
 Strategy & New finds & Executions \\
 \midrule
-Bit flips (1/2/4 bit)   & 9   & $\sim$69k \\
-Byte flips              & 1   & $\sim$8.6k \\
-Arithmetics             & 10  & $\sim$996k \\
-Known integers          & 1   & $\sim$293k \\
-Dictionary              & 1   & $\sim$156k \\
-Havoc                   & 840 & $\sim$61.2M \\
+Bit/byte flips \& arithmetics & 21  & $\sim$1.1M \\
+Known integers                &  1  & $\sim$293k \\
+Dictionary                    &  1  & $\sim$156k \\
+Havoc                         & 840 & $\sim$61.2M \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-Havoc dominates overwhelmingly: \textbf{840 of 862 new corpus entries (97.5\%)}
-were found by havoc, which applies random combinations of bit flips, byte
-replacements, block deletions, and chunk splicing across millions of executions.
-The dictionary contributed only \textbf{1 new find} across $\sim$156k
-executions. This is expected: the dictionary helps AFL++ reach new chunk-type
-parsers early in the campaign, but once those paths are seeded into the corpus,
-havoc-based mutation of valid inputs becomes the dominant driver of coverage
-growth. The low dictionary yield does not mean it was unhelpful --- it likely
-accelerated initial coverage by providing structurally meaningful tokens that
-pure bit-level stages would take far longer to stumble upon.
+Havoc found \textbf{840 of 863 new corpus entries (97.3\%)} by applying
+random combinations of mutations across 61M executions. The dictionary
+contributed 1 new find, consistent with its role as an early-campaign
+accelerator: once chunk-type paths are seeded into the corpus, havoc-based
+mutation of valid inputs dominates coverage growth.
 
 \section{Q4: Campaign Analysis}
 The white-box campaign ran for 75,277 seconds and executed 62,454,465 test cases
