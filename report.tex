@@ -44,13 +44,11 @@
 \title{\Large \bf CS-412 Software Security: Fuzzing Lab Report \\ Fuzzing of libpng 1.2.56}
 
 \author{
-{\rm Sylvain Pichot}
-\and
-{\rm Jeanne De Marmiés}
-\and
-{\rm Erik Hübner}
-\and
-{\rm Youcef Amar}
+\begin{tabular}{cccc}
+{\rm Sylvain Pichot} & {\rm Jeanne De Marmiés} & {\rm Erik Hübner} & {\rm Youcef Amar}
+\end{tabular}
+\\[0.5em]
+{\rm \makebox[\linewidth][c]{\href{https://github.com/2Fick/fuzz-busters-cs412-fuzzing-lab}{GitHub Repository Link}}}
 }
 
 \begin{document}
@@ -254,14 +252,14 @@ AddressSanitizer, (2) ASan is active at runtime and detects memory errors, and
 
 \textbf{Why no real bugs were found:} Three factors explain the absence of crashes
 in the main campaign. First, \texttt{libpng 1.2.56} is a mature, extensively
-audited library --- CVE-2015-8126 was already patched in 1.2.54 (before our
+audited library: CVE-2015-8126 was already patched in 1.2.54 (before our
 target), and while CVE-2016-10087 technically affects 1.2.56, it is a
 NULL-pointer dereference triggered by a specific \texttt{png\_set\_text}
 code path that our harness never exercises, leaving few low-hanging
 memory-safety bugs reachable by our mutation-based campaign. Second, our
 campaign reached only 31.69\% edge coverage (974 of 3,074 edges): the remaining
-68\% of code paths --- including Adam7 interlacing, 16-bit depth processing, and
-compressed ancillary chunks --- were never exercised, so bugs in those paths could
+68\% of code paths (including Adam7 interlacing, 16-bit depth processing, and
+compressed ancillary chunks) were never exercised, so bugs in those paths could
 not be found. Third, mutation-based fuzzing without structure-aware generation
 struggles to produce the precise byte sequences needed to pass zlib decompression
 and reach the deep pixel-transformation logic where historical bugs have lived.
@@ -349,7 +347,7 @@ binary, the total is \textbf{3,074 edges}. This count covers both the libpng
 (\texttt{src/harness.c}). The harness \texttt{main()} contributes at most
 $\sim$10 edges (argument check, \texttt{fopen}, \texttt{setjmp} branch, four
 API calls, cleanup), so the \textbf{library-alone edge count is approximately
-3,064} --- less than 0.4\% difference from the binary total. The overwhelming
+3,064}, less than 0.4\% difference from the binary total. The overwhelming
 majority of edges originate from libpng's parsing, decompression, and
 transformation pipeline, not from our harness wrapper.
 
