@@ -200,16 +200,17 @@ at 829.65 exec/s. Final AFL++ status metrics were: corpus count 1,103,
 stability 100.00\%, bitmap coverage 31.69\% (974 of 3,074 edges), cycles done 323,
 and 0 crashes / 0 hangs.
 
-The edge-discovery curve in \texttt{plot\_output/edges.png} shows a three-phase shape:
+The edge-discovery curve (Figure~\ref{fig:edges_whitebox}) shows a three-phase shape:
 an aggressive early discovery phase, a long diminishing-returns middle phase, and a final plateau.
+The AFL++ status screen is shown in Figure~\ref{fig:status_whitebox}.
 From \texttt{findings/default/plot\_data}, coverage milestones were:
 \begin{itemize}
-  \item 689 edges (22.41\%) at 61 s --- early rapid discovery
-  \item 783 edges (25.47\%) at 530 s --- acceleration phase
-  \item 935 edges (30.42\%) at 7,183 s --- approaching saturation
-  \item 959 edges (31.20\%) at 28,461 s --- diminishing returns
-  \item 973 edges (31.69\%) at 49,478 s --- final new edge
-  \item 974 edges (31.69\%) at 54,735 s --- plateau reached
+  \item 689 edges (22.41\%) at 61 s: early rapid discovery
+  \item 783 edges (25.47\%) at 530 s: acceleration phase
+  \item 935 edges (30.42\%) at 7,183 s: approaching saturation
+  \item 959 edges (31.20\%) at 28,461 s: diminishing returns
+  \item 973 edges (31.69\%) at 49,478 s: final new edge
+  \item 974 edges (31.69\%) at 54,735 s: plateau reached
 \end{itemize}
 
 This timestamped progression supports a saturation argument. After roughly 15.2 hours,
@@ -290,7 +291,9 @@ An attacker targeting Firefox's image rendering pipeline or ImageMagick's upload
 \subsection{Comparative Analysis}
 We executed a parallel campaign using AFL++ QEMU mode (\texttt{-Q}) against an
 uninstrumented \texttt{libpng} binary compiled with standard \texttt{gcc} and no
-sanitizers. The results after $\sim$35 minutes (Figure~\ref{fig:status_comparison})
+sanitizers. The QEMU status screen and edge-discovery plot are shown in
+Figure~\ref{fig:status_qemu} and Figure~\ref{fig:edges_qemu} respectively.
+The results after $\sim$35 minutes (Figure~\ref{fig:status_comparison})
 are summarized in Table~\ref{tab:qemu_comparison}:
 
 \begin{table}[h]
@@ -412,9 +415,7 @@ restarts.
 \end{center}
 \vspace{0.5cm}
 
-\section{Sub-Appendix A: AFL++ Status Screens}
-\label{app:status_screens}
-Contains screenshots of the AFL++ status UI for both campaigns.
+\subsection*{AFL++ Status Screens}
 
 \begin{figure}[htbp]
   \centering
@@ -458,9 +459,7 @@ Contains screenshots of the AFL++ status UI for both campaigns.
   \label{fig:status_persistent}
 \end{figure}
 
-\section{Sub-Appendix B: Coverage Plots}
-\label{app:plots}
-Contains the generated plots showing coverage (edges) over time.
+\subsection*{Coverage Plots}
 
 \begin{figure}[htbp]
   \centering
@@ -476,9 +475,7 @@ Contains the generated plots showing coverage (edges) over time.
   \label{fig:edges_qemu}
 \end{figure}
 
-\section{Sub-Appendix C: Triage and Source Code}
-\label{app:triage}
-Contains the harness source code and crash triage reports.
+\subsection*{Crash Triage and Source Code}
 
 \begin{lstlisting}[caption=Reproduction Steps for Q5 Crash Triage]
 # From host: enter the container
