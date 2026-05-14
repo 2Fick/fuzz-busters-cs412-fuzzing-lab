@@ -20,7 +20,7 @@ PNG_URL = https://download.sourceforge.net/libpng/$(PNG_TARBALL)
 # Path to the AFL++ utility patches
 AFL_PATCH = /AFLplusplus/utils/libpng_no_checksum/libpng-nocrc.patch
 
-.PHONY: all build build-qemu build-bugged build-persistent build-nosanit fuzz fuzz-qemu fuzz-bugged fuzz-persistent fuzz-nosanit plot clean build-docker run-docker bootstrap-libpng
+.PHONY: all build build-qemu build-bugged build-persistent build-nosanit fuzz fuzz-qemu fuzz-bugged fuzz-persistent fuzz-nosanit plot clean build-docker run-docker bootstrap-libpng help
 
 all: build build-qemu build-persistent
 
@@ -140,3 +140,37 @@ run-docker:
 		-v $(shell pwd)/findings-qemu:/fuzzing/findings-qemu \
 		-v $(shell pwd)/findings-bugged:/fuzzing/findings-bugged \
 		cs412-fuzz-env bash
+
+# 8. HELP TARGET
+help:
+	@echo ""
+	@echo "CS-412 Fuzzing Lab -- Available Makefile targets:"
+	@echo "=================================================="
+	@echo ""
+	@echo "  Setup:"
+	@echo "    build-docker       Build the Docker container (AFL++ + libpng)"
+	@echo "    run-docker         Launch the container with findings dirs mounted"
+	@echo "    bootstrap-libpng   Download and extract libpng source trees"
+	@echo ""
+	@echo "  Build:"
+	@echo "    build              Instrumented white-box harness (AFL + ASan)"
+	@echo "    build-qemu         Uninstrumented black-box harness (gcc, QEMU mode)"
+	@echo "    build-bugged       Instrumented harness with synthetic heap overflow"
+	@echo "    build-persistent   Persistent-mode harness for Q8 (requires build)"
+	@echo "    build-nosanit      Instrumented harness without ASan (Q8 benchmark)"
+	@echo "    all                Run build + build-qemu + build-persistent"
+	@echo ""
+	@echo "  Fuzz:"
+	@echo "    fuzz               White-box instrumented campaign"
+	@echo "    fuzz-qemu          Black-box QEMU campaign"
+	@echo "    fuzz-bugged        Validate fuzzer on bugged (synthetic vuln) build"
+	@echo "    fuzz-persistent    Persistent-mode campaign (Q8)"
+	@echo "    fuzz-nosanit       No-sanitizer campaign (Q8 baseline benchmark)"
+	@echo ""
+	@echo "  Reporting:"
+	@echo "    plot               Generate afl-plot graphs for all campaigns"
+	@echo "    clean              Remove all findings, plots, and build artifacts"
+	@echo ""
+	@echo "  Typical workflow:"
+	@echo "    make build-docker -> make run-docker -> make fuzz -> make plot"
+	@echo ""
